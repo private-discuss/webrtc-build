@@ -99,13 +99,35 @@ jobs:
       with:
         path: artifacts
         name: LiveKitWebRTC.xcframework.zip
-    - name: Extract the Android aar and checksums
+    # The raw libwebrtc.aar has prefixed JNI symbols but Java classes still in org.webrtc:
+    # LiveKit's webrtc-sdk/android repo shadow-relocates them to livekit.org.webrtc and renames
+    # the .so (liblkjingle_peerconnection_so). Same recipe here, at the matching tag, so the
+    # asset is a drop-in for io.github.webrtc-sdk:android-prefixed.
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+    - name: Package android-prefixed (webrtc-sdk/android recipe)
       run: |
         set -e
         mkdir -p aar && tar -xzf artifacts/webrtc.tar.gz -C aar
         AAR=$(find aar -name libwebrtc.aar | head -1)
-        cp "$AAR" "artifacts/android-prefixed-${GITHUB_REF_NAME}.aar"
-        (cd artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+        . build/VERSION
+        git clone -q --branch "v${WEBRTC_VERSION}" --depth 1 https://github.com/webrtc-sdk/android.git lkandroid
+        cd lkandroid
+        unzip -o -q "../$AAR" -d prefix/
+        mkdir -p android-prefixed/shadow/libs android-prefixed/src/main/jniLibs
+        mv prefix/classes.jar android-prefixed/shadow/libs/
+        python3 tools/downgrade_class_version.py android-prefixed/shadow/libs/classes.jar
+        for a in armeabi-v7a arm64-v8a x86 x86_64; do
+          mkdir -p "android-prefixed/src/main/jniLibs/$a"
+          mv "prefix/jni/$a/libjingle_peerconnection_so.so" "android-prefixed/src/main/jniLibs/$a/liblkjingle_peerconnection_so.so"
+        done
+        # Gradle 7.2 cannot run on JDK 17; 7.4.2 can and AGP 7.1.3 accepts it.
+        sed -i 's#gradle-7.2-bin.zip#gradle-7.4.2-bin.zip#' gradle/wrapper/gradle-wrapper.properties
+        ./gradlew --no-daemon -q :android-prefixed:assembleRelease
+        cp android-prefixed/build/outputs/aar/android-prefixed-release.aar "../artifacts/android-prefixed-${GITHUB_REF_NAME}.aar"
+        cd .. && (cd artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
     - uses: softprops/action-gh-release@v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
