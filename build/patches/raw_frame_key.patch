@@ -1,0 +1,28 @@
+Private Discuss: FrameCryptor uses the raw key material (no PBKDF2 / HKDF derivation).
+
+The web client (discuss-rooms e2ee.worker) and the native Discuss apps encrypt media frames
+with the 32-byte AES-256-GCM key exactly as exchanged (RSA-OAEP wrapped). Upstream LiveKit
+derives a 128-bit key from that material, which cannot interoperate. Only the two frame paths
+change (encryptFrame / decryptFrame); DataPacketCryptor is untouched. The ratchet fallback
+never runs with ratchetWindowSize = 0. Applied to apple_prefixed and android_prefixed.
+
+--- a/api/crypto/frame_crypto_transformer.cc
++++ b/api/crypto/frame_crypto_transformer.cc
+@@ -519,7 +519,7 @@
+ 
+   std::vector<uint8_t> buffer;
+   if (AesEncryptDecrypt(EncryptOrDecrypt::kEncrypt, algorithm_,
+-                        key_set->encryption_key, iv, frame_header, payload,
++                        key_set->material, iv, frame_header, payload,
+                         &buffer) == Success) {
+     webrtc::Buffer encrypted_payload(buffer.data(), buffer.size());
+     webrtc::Buffer tag(encrypted_payload.data() + encrypted_payload.size() - 16,
+@@ -714,7 +714,7 @@
+   auto initialKeyMaterial = key_set->material;
+   bool decryption_success = false;
+   if (AesEncryptDecrypt(EncryptOrDecrypt::kDecrypt, algorithm_,
+-                        key_set->encryption_key, iv, frame_header,
++                        key_set->material, iv, frame_header,
+                         encrypted_payload, &buffer) == Success) {
+     decryption_success = true;
+   } else {

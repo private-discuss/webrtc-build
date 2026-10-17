@@ -1,12 +1,16 @@
 name: build
 
+# Private Discuss fork: builds only the two packages @livekit/react-native-webrtc consumes
+# (LiveKitWebRTC.xcframework, android_prefixed aar), with build/patches/raw_frame_key.patch,
+# on GitHub-hosted runners. Runs on a tag push (release created) or by hand.
+
 on:
   workflow_dispatch:
     inputs:
       commitHash:
-        description: 'webrtc-sdk commit hash'
+        description: 'webrtc-sdk commit hash (empty = build/VERSION)'
         default: ''
-        required: true
+        required: false
       configuration:
         description: 'build configuration'
         default: 'release'
@@ -16,19 +20,10 @@ on:
           - release
           - debug
   push:
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-      - 'NOTICE'
-      - '.gitignore'
-      - '.dockerignore'
-    branches-ignore:
-      - daily
     tags:
       - '*'
 
 permissions:
-  packages: write
   contents: write
   actions: read
 
@@ -41,9 +36,9 @@ jobs:
       fail-fast: false
       matrix:
         name:
-          - apple
           - apple_prefixed
     runs-on: macos-26
+    timeout-minutes: 360
     steps:
     - uses: actions/checkout@v5
     - name: Select Xcode 26.0
@@ -64,12 +59,23 @@ jobs:
       fail-fast: false
       matrix:
         name:
-          - android
           - android_prefixed
-          - android_prefixed_stripped
-    runs-on: namespace-profile-webrtc-android
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
     steps:
     - uses: actions/checkout@v4
+    # The WebRTC Android checkout + 4-arch build needs ~45 GB: drop the runner's preinstalled tools.
+    - name: Free disk space
+      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+    - run: df -h /
     - run: ./build.${{ matrix.name }}.sh "${{ github.event.inputs.commitHash }}"
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
@@ -92,47 +98,16 @@ jobs:
     - uses: actions/download-artifact@v4
       with:
         path: artifacts
-        name: webrtc.android_prefixed_stripped.tar.gz
-    - uses: actions/download-artifact@v4
-      with:
-        path: artifacts
         name: LiveKitWebRTC.xcframework.zip
+    - name: Extract the Android aar and checksums
+      run: |
+        set -e
+        mkdir -p aar && tar -xzf artifacts/webrtc.tar.gz -C aar
+        AAR=$(find aar -name libwebrtc.aar | head -1)
+        cp "$AAR" "artifacts/android-prefixed-${GITHUB_REF_NAME}.aar"
+        (cd artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
     - uses: softprops/action-gh-release@v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         files: artifacts/**
-  publish-xcframework:
-    name: Publish
-    if: github.ref_type == 'tag'
-    needs:
-      - create-release
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: actions/download-artifact@v4
-      with:
-        path: artifacts
-        name: LiveKitWebRTC.xcframework.zip
-    - name: Render Package.swift and podspec
-      id: render
-      run: |
-        # Build tags are prefixed with m (m144.7559.13); hosting repo tags are not.
-        VERSION="${GITHUB_REF_NAME#m}"
-        CHECKSUM=$(sha256sum artifacts/LiveKitWebRTC.xcframework.zip | awk '{print $1}')
-        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-        mkdir -p out
-        for f in Package.swift LiveKitWebRTC.podspec; do
-          sed -e "s|{{VERSION}}|${VERSION}|g" \
-              -e "s|{{CHECKSUM}}|${CHECKSUM}|g" \
-              ".github/templates/$f" > "out/$f"
-        done
-    - uses: livekit/publish-xcframework-action@3b8645334fb62b0fd1d7067067819bcd111db157 # main
-      with:
-        xcframework-zip: artifacts/LiveKitWebRTC.xcframework.zip
-        version: ${{ steps.render.outputs.version }}
-        hosting-repo: livekit/webrtc-xcframework
-        files: |
-          out/Package.swift:Package.swift
-          out/LiveKitWebRTC.podspec:LiveKitWebRTC.podspec
-        token: ${{ secrets.XCFRAMEWORK_PAT }}

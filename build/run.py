@@ -221,6 +221,7 @@ PATCHES = {
     'apple': [],
     'apple_prefixed': [
         'apple_prefix.patch',
+        'raw_frame_key.patch',
     ],
     'windows_x86_64': [
         'add_license_dav1d.patch',
@@ -255,13 +256,15 @@ PATCHES = {
         'add_license_dav1d.patch',
         'android_webrtc_version.patch',
         'fix_mocks.patch',
-        'jni_prefix.patch'
+        'jni_prefix.patch',
+        'raw_frame_key.patch',
     ],
     'android_prefixed_stripped': [
         'add_license_dav1d.patch',
         'android_webrtc_version.patch',
         'fix_mocks.patch',
-        'jni_prefix.patch'
+        'jni_prefix.patch',
+        'raw_frame_key.patch',
     ],
     'raspberry-pi-os_armv6': [
         'add_license_dav1d.patch',
